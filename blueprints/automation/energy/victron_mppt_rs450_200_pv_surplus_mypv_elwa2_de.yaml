@@ -1,4 +1,4 @@
-# version: 1.1.2
+# version: 1.2.0
 blueprint:
   name: Victron MPPT RS450/200 PV-Überschuss Freigabe Heizstab MYPV ELWA2
   description: >-
@@ -15,6 +15,9 @@ blueprint:
 
     Fällt die Bedingung für die konfigurierte Zeit weg, wird der Schalter
     sofort wieder in den Pause-Zustand gesetzt.
+
+    Zusätzlich prüft die Automation zyklisch den aktuellen Zustand und
+    korrigiert ihn falls nötig (konfigurierbar über Prüfintervall).
 
     Über die Option "Schalterzustand Betrieb" lässt sich konfigurieren, ob
     AN oder AUS den Betrieb bedeutet (für Pause-Schalter und Freigabe-Schalter).
@@ -71,8 +74,7 @@ blueprint:
           mode: box
     trigger_mode:
       name: Auslösemodus
-      description: >-
-        Welche Bedingungen müssen für die Heizstab-Freigabe erfüllt sein?
+      description: Welche Bedingungen müssen für die Heizstab-Freigabe erfüllt sein?
       default: both
       selector:
         select:
@@ -101,6 +103,26 @@ blueprint:
         seconds: 30
       selector:
         duration: {}
+    check_interval:
+      name: Zyklisches Prüfintervall
+      description: >-
+        Wie oft soll die Automation den aktuellen Zustand selbstständig prüfen
+        und ggf. korrigieren?
+      default: "/30"
+      selector:
+        select:
+          mode: dropdown
+          options:
+            - label: Alle 5 Sekunden
+              value: "/5"
+            - label: Alle 10 Sekunden
+              value: "/10"
+            - label: Alle 15 Sekunden
+              value: "/15"
+            - label: Alle 30 Sekunden (Standard)
+              value: "/30"
+            - label: Alle 60 Sekunden
+              value: "/60"
 
 mode: single
 
@@ -139,6 +161,9 @@ triggers:
         )
       }}
     for: !input lost_surplus_for
+  - id: periodic_check
+    trigger: time_pattern
+    seconds: !input check_interval
 
 conditions: []
 
@@ -151,6 +176,7 @@ actions:
               {{
                 (trigger.id == 'mppt_limited' and trigger_mode in ['both', 'limited_only']) or
                 (trigger.id == 'soc_above' and trigger_mode == 'soc_only') or
+                trigger.id == 'periodic_check' or
                 trigger.platform is none
               }}
           - condition: template
@@ -178,7 +204,20 @@ actions:
       # Bedingung weggefallen -> Pause aktivieren
       - conditions:
           - condition: template
-            value_template: "{{ trigger.id == 'surplus_lost' }}"
+            value_template: "{{ trigger.id in ['surplus_lost', 'periodic_check'] }}"
+          - condition: template
+            value_template: >-
+              {{
+                (trigger_mode in ['both', 'soc_only'] and
+                  states(battery_soc_entity) | float(0) <= soc_threshold | float(0)
+                ) or
+                (trigger_mode in ['both', 'limited_only'] and
+                  expand(mppt_mode_entities)
+                    | selectattr('state', 'eq', 'LIMITED')
+                    | list
+                    | count == 0
+                )
+              }}
           - condition: template
             value_template: "{{ states(pause_switch) == running_state }}"
         sequence:

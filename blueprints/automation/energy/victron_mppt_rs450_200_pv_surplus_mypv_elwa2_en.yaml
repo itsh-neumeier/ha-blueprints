@@ -1,4 +1,4 @@
-# version: 1.1.2
+# version: 1.2.0
 blueprint:
   name: Victron MPPT RS450/200 PV Surplus Enable Heating Rod MYPV ELWA2
   description: >-
@@ -15,6 +15,9 @@ blueprint:
 
     If the condition is no longer met for the configured duration, the switch is
     immediately returned to the pause state.
+
+    A periodic check also verifies and corrects the switch state on a configurable
+    interval, regardless of trigger events.
 
     The "Operating switch state" option lets you configure whether ON or OFF means
     operating — supporting both pause-type and enable-type switches.
@@ -100,6 +103,26 @@ blueprint:
         seconds: 30
       selector:
         duration: {}
+    check_interval:
+      name: Periodic check interval
+      description: >-
+        How often should the automation verify and correct the switch state
+        independent of trigger events?
+      default: "/30"
+      selector:
+        select:
+          mode: dropdown
+          options:
+            - label: Every 5 seconds
+              value: "/5"
+            - label: Every 10 seconds
+              value: "/10"
+            - label: Every 15 seconds
+              value: "/15"
+            - label: Every 30 seconds (default)
+              value: "/30"
+            - label: Every 60 seconds
+              value: "/60"
 
 mode: single
 
@@ -138,6 +161,9 @@ triggers:
         )
       }}
     for: !input lost_surplus_for
+  - id: periodic_check
+    trigger: time_pattern
+    seconds: !input check_interval
 
 conditions: []
 
@@ -150,6 +176,7 @@ actions:
               {{
                 (trigger.id == 'mppt_limited' and trigger_mode in ['both', 'limited_only']) or
                 (trigger.id == 'soc_above' and trigger_mode == 'soc_only') or
+                trigger.id == 'periodic_check' or
                 trigger.platform is none
               }}
           - condition: template
@@ -177,7 +204,20 @@ actions:
       # Condition gone -> activate pause
       - conditions:
           - condition: template
-            value_template: "{{ trigger.id == 'surplus_lost' }}"
+            value_template: "{{ trigger.id in ['surplus_lost', 'periodic_check'] }}"
+          - condition: template
+            value_template: >-
+              {{
+                (trigger_mode in ['both', 'soc_only'] and
+                  states(battery_soc_entity) | float(0) <= soc_threshold | float(0)
+                ) or
+                (trigger_mode in ['both', 'limited_only'] and
+                  expand(mppt_mode_entities)
+                    | selectattr('state', 'eq', 'LIMITED')
+                    | list
+                    | count == 0
+                )
+              }}
           - condition: template
             value_template: "{{ states(pause_switch) == running_state }}"
         sequence:
