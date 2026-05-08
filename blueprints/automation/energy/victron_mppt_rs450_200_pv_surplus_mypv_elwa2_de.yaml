@@ -1,20 +1,23 @@
-# version: 1.0.0
+# version: 1.1.0
 blueprint:
   name: Victron MPPT RS450/200 PV-Überschuss Freigabe Heizstab MYPV ELWA2
   description: >-
     Steuert einen frei wählbaren Schalter (z. B. den Pause-Schalter eines
     Heizstabs) basierend auf dem PV-Überschuss eines Victron MPPT RS450/200.
 
-    Bei ausreichendem Überschuss (Batterie-SOC über Schwellwert UND mindestens
-    ein ausgewählter MPPT im Modus LIMITED für die konfigurierte Zeit) wird
-    der Schalter in den Betriebszustand gesetzt (Pause aufgehoben).
+    Der Auslösemodus bestimmt, welche Bedingungen für die Freigabe gelten:
+    "LIMITED und SOC" erfordert beides, "Nur LIMITED" ignoriert den SOC,
+    "Nur SOC" ignoriert den MPPT-Modus.
 
-    Fällt der Überschuss für die konfigurierte Zeit weg, wird der Schalter
+    Bei erfüllter Bedingung (MPPT im Modus LIMITED für die konfigurierte Zeit
+    und/oder Batterie-SOC über Schwellwert) wird der Schalter in den
+    Betriebszustand gesetzt (Pause aufgehoben).
+
+    Fällt die Bedingung für die konfigurierte Zeit weg, wird der Schalter
     sofort wieder in den Pause-Zustand gesetzt.
 
     Über die Option "Schalterzustand Betrieb" lässt sich konfigurieren, ob
-    AN oder AUS den Betrieb bedeutet (für Pause-Schalter und
-    Freigabe-Schalter).
+    AN oder AUS den Betrieb bedeutet (für Pause-Schalter und Freigabe-Schalter).
   domain: automation
   source_url: https://raw.githubusercontent.com/itsh-neumeier/ha-blueprints/main/blueprints/automation/energy/victron_mppt_rs450_200_pv_surplus_mypv_elwa2_de.yaml
   author: Timo Neumeier
@@ -26,7 +29,9 @@ blueprint:
           domain: sensor
     mppt_mode_entities:
       name: MPPT-Betriebsmodus-Sensoren
-      description: Ein oder mehrere Victron MPPT-Betriebsmodus-Sensoren auswählen.
+      description: >-
+        Ein oder mehrere Victron MPPT-Betriebsmodus-Sensoren auswählen.
+        Wird im Modus "Nur SOC" ignoriert.
       selector:
         entity:
           multiple: true
@@ -55,6 +60,7 @@ blueprint:
               value: "on"
     battery_soc_threshold:
       name: Batterie-SOC-Schwellwert
+      description: Wird im Modus "Nur LIMITED" ignoriert.
       default: 90
       selector:
         number:
@@ -63,8 +69,24 @@ blueprint:
           step: 1
           unit_of_measurement: "%"
           mode: box
+    trigger_mode:
+      name: Auslösemodus
+      description: >-
+        Welche Bedingungen müssen für die Heizstab-Freigabe erfüllt sein?
+      default: both
+      selector:
+        select:
+          mode: dropdown
+          options:
+            - label: LIMITED und SOC (Standard)
+              value: both
+            - label: Nur LIMITED
+              value: limited_only
+            - label: Nur SOC
+              value: soc_only
     limited_for:
       name: MPPT muss LIMITED bleiben für
+      description: Wird im Modus "Nur SOC" ignoriert.
       default:
         hours: 0
         minutes: 0
@@ -72,7 +94,7 @@ blueprint:
       selector:
         duration: {}
     lost_surplus_for:
-      name: Überschuss muss weg sein für
+      name: Bedingung muss weggefallen sein für
       default:
         hours: 0
         minutes: 0
@@ -86,6 +108,7 @@ trigger_variables:
   battery_soc_entity: !input battery_soc_entity
   mppt_mode_entities: !input mppt_mode_entities
   soc_threshold: !input battery_soc_threshold
+  trigger_mode: !input trigger_mode
 
 variables:
   pause_switch: !input pause_switch
@@ -97,15 +120,23 @@ triggers:
     entity_id: !input mppt_mode_entities
     to: "LIMITED"
     for: !input limited_for
+  - id: soc_above
+    trigger: numeric_state
+    entity_id: !input battery_soc_entity
+    above: !input battery_soc_threshold
   - id: surplus_lost
     trigger: template
     value_template: >-
       {{
-        states(battery_soc_entity) | float(0) <= soc_threshold | float(0)
-        or expand(mppt_mode_entities)
-          | selectattr('state', 'eq', 'LIMITED')
-          | list
-          | count == 0
+        (trigger_mode in ['both', 'soc_only'] and
+          states(battery_soc_entity) | float(0) <= soc_threshold | float(0)
+        ) or
+        (trigger_mode in ['both', 'limited_only'] and
+          expand(mppt_mode_entities)
+            | selectattr('state', 'eq', 'LIMITED')
+            | list
+            | count == 0
+        )
       }}
     for: !input lost_surplus_for
 
@@ -113,20 +144,28 @@ conditions: []
 
 actions:
   - choose:
-      # Überschuss vorhanden -> Pause aufheben (Schalter in Betriebszustand)
+      # Bedingung erfüllt -> Pause aufheben (Schalter in Betriebszustand)
       - conditions:
-          - condition: template
-            value_template: "{{ trigger.id == 'mppt_limited' }}"
-          - condition: numeric_state
-            entity_id: !input battery_soc_entity
-            above: !input battery_soc_threshold
           - condition: template
             value_template: >-
               {{
+                (trigger.id == 'mppt_limited' and trigger_mode in ['both', 'limited_only']) or
+                (trigger.id == 'soc_above' and trigger_mode == 'soc_only')
+              }}
+          - condition: template
+            value_template: >-
+              {{
+                trigger_mode == 'limited_only' or
+                states(battery_soc_entity) | float(0) > soc_threshold | float(0)
+              }}
+          - condition: template
+            value_template: >-
+              {{
+                trigger_mode == 'soc_only' or
                 expand(mppt_mode_entities)
-                | selectattr('state', 'eq', 'LIMITED')
-                | list
-                | count > 0
+                  | selectattr('state', 'eq', 'LIMITED')
+                  | list
+                  | count > 0
               }}
           - condition: template
             value_template: "{{ states(pause_switch) != running_state }}"
@@ -135,7 +174,7 @@ actions:
             target:
               entity_id: !input pause_switch
 
-      # Überschuss weg -> Pause aktivieren (sofort)
+      # Bedingung weggefallen -> Pause aktivieren
       - conditions:
           - condition: template
             value_template: "{{ trigger.id == 'surplus_lost' }}"

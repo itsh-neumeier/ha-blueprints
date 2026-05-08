@@ -1,16 +1,20 @@
-# version: 1.0.0
+# version: 1.1.0
 blueprint:
   name: Victron MPPT RS450/200 PV Surplus Enable Heating Rod MYPV ELWA2
   description: >-
     Controls a freely selectable switch (e.g. the pause switch of a heating rod)
     based on the PV surplus of a Victron MPPT RS450/200.
 
-    When sufficient surplus is available (battery SOC above threshold AND at least
-    one selected MPPT in LIMITED mode for the configured duration), the switch is
-    set to the operating state (pause lifted).
+    The trigger mode determines which conditions must be met to enable the load:
+    "LIMITED and SOC" requires both, "LIMITED only" ignores SOC,
+    "SOC only" ignores MPPT mode.
 
-    If the surplus disappears for the configured duration, the switch is immediately
-    returned to the pause state.
+    When the condition is met (MPPT in LIMITED mode for the configured duration
+    and/or battery SOC above threshold), the switch is set to the operating state
+    (pause lifted).
+
+    If the condition is no longer met for the configured duration, the switch is
+    immediately returned to the pause state.
 
     The "Operating switch state" option lets you configure whether ON or OFF means
     operating — supporting both pause-type and enable-type switches.
@@ -25,7 +29,9 @@ blueprint:
           domain: sensor
     mppt_mode_entities:
       name: MPPT Operating Mode Sensors
-      description: Select one or more Victron MPPT operating mode sensors.
+      description: >-
+        Select one or more Victron MPPT operating mode sensors.
+        Ignored when trigger mode is "SOC only".
       selector:
         entity:
           multiple: true
@@ -54,6 +60,7 @@ blueprint:
               value: "on"
     battery_soc_threshold:
       name: Battery SOC threshold
+      description: Ignored when trigger mode is "LIMITED only".
       default: 90
       selector:
         number:
@@ -62,8 +69,23 @@ blueprint:
           step: 1
           unit_of_measurement: "%"
           mode: box
+    trigger_mode:
+      name: Trigger mode
+      description: Which conditions must be met to enable the load?
+      default: both
+      selector:
+        select:
+          mode: dropdown
+          options:
+            - label: LIMITED and SOC (default)
+              value: both
+            - label: LIMITED only
+              value: limited_only
+            - label: SOC only
+              value: soc_only
     limited_for:
       name: MPPT must stay LIMITED for
+      description: Ignored when trigger mode is "SOC only".
       default:
         hours: 0
         minutes: 0
@@ -71,7 +93,7 @@ blueprint:
       selector:
         duration: {}
     lost_surplus_for:
-      name: Surplus must be gone for
+      name: Condition must be gone for
       default:
         hours: 0
         minutes: 0
@@ -85,6 +107,7 @@ trigger_variables:
   battery_soc_entity: !input battery_soc_entity
   mppt_mode_entities: !input mppt_mode_entities
   soc_threshold: !input battery_soc_threshold
+  trigger_mode: !input trigger_mode
 
 variables:
   pause_switch: !input pause_switch
@@ -96,15 +119,23 @@ triggers:
     entity_id: !input mppt_mode_entities
     to: "LIMITED"
     for: !input limited_for
+  - id: soc_above
+    trigger: numeric_state
+    entity_id: !input battery_soc_entity
+    above: !input battery_soc_threshold
   - id: surplus_lost
     trigger: template
     value_template: >-
       {{
-        states(battery_soc_entity) | float(0) <= soc_threshold | float(0)
-        or expand(mppt_mode_entities)
-          | selectattr('state', 'eq', 'LIMITED')
-          | list
-          | count == 0
+        (trigger_mode in ['both', 'soc_only'] and
+          states(battery_soc_entity) | float(0) <= soc_threshold | float(0)
+        ) or
+        (trigger_mode in ['both', 'limited_only'] and
+          expand(mppt_mode_entities)
+            | selectattr('state', 'eq', 'LIMITED')
+            | list
+            | count == 0
+        )
       }}
     for: !input lost_surplus_for
 
@@ -112,20 +143,28 @@ conditions: []
 
 actions:
   - choose:
-      # Surplus available -> lift pause (set switch to operating state)
+      # Condition met -> lift pause (set switch to operating state)
       - conditions:
-          - condition: template
-            value_template: "{{ trigger.id == 'mppt_limited' }}"
-          - condition: numeric_state
-            entity_id: !input battery_soc_entity
-            above: !input battery_soc_threshold
           - condition: template
             value_template: >-
               {{
+                (trigger.id == 'mppt_limited' and trigger_mode in ['both', 'limited_only']) or
+                (trigger.id == 'soc_above' and trigger_mode == 'soc_only')
+              }}
+          - condition: template
+            value_template: >-
+              {{
+                trigger_mode == 'limited_only' or
+                states(battery_soc_entity) | float(0) > soc_threshold | float(0)
+              }}
+          - condition: template
+            value_template: >-
+              {{
+                trigger_mode == 'soc_only' or
                 expand(mppt_mode_entities)
-                | selectattr('state', 'eq', 'LIMITED')
-                | list
-                | count > 0
+                  | selectattr('state', 'eq', 'LIMITED')
+                  | list
+                  | count > 0
               }}
           - condition: template
             value_template: "{{ states(pause_switch) != running_state }}"
@@ -134,7 +173,7 @@ actions:
             target:
               entity_id: !input pause_switch
 
-      # Surplus gone -> activate pause (immediately)
+      # Condition gone -> activate pause
       - conditions:
           - condition: template
             value_template: "{{ trigger.id == 'surplus_lost' }}"
