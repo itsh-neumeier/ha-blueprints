@@ -1,26 +1,30 @@
-# version: 1.2.0
+# version: 2.0.0
 blueprint:
-  name: Victron MPPT RS450/200 PV-Überschuss Freigabe Heizstab MYPV ELWA2
+  name: Victron MPPT RS450/200 PV-Überschuss Steuerung MYPV ELWA2
   description: >-
-    Steuert einen frei wählbaren Schalter (z. B. den Pause-Schalter eines
-    Heizstabs) basierend auf dem PV-Überschuss eines Victron MPPT RS450/200.
+    Steuert einen PV-Überschuss-Verbraucher (z. B. myPV ELWA2) basierend auf
+    dem PV-Überschuss eines Victron MPPT RS450/200 über frei konfigurierbare
+    Aktionen (z. B. HTTP-Befehle via rest_command).
 
     Der Auslösemodus bestimmt, welche Bedingungen für die Freigabe gelten:
     "LIMITED und SOC" erfordert beides, "Nur LIMITED" ignoriert den SOC,
     "Nur SOC" ignoriert den MPPT-Modus.
 
-    Bei erfüllter Bedingung (MPPT im Modus LIMITED für die konfigurierte Zeit
-    und/oder Batterie-SOC über Schwellwert) wird der Schalter in den
-    Betriebszustand gesetzt (Pause aufgehoben).
+    Bei erfüllter Bedingung wird die konfigurierte Einschalt-Aktion ausgeführt.
+    Bei weggefallenem Überschuss wird die Ausschalt-Aktion ausgeführt.
 
-    Fällt die Bedingung für die konfigurierte Zeit weg, wird der Schalter
-    sofort wieder in den Pause-Zustand gesetzt.
+    Zusätzlich prüft die Automation zyklisch den Zustand und wiederholt die
+    passende Aktion falls nötig.
 
-    Zusätzlich prüft die Automation zyklisch den aktuellen Zustand und
-    korrigiert ihn falls nötig (konfigurierbar über Prüfintervall).
-
-    Über die Option "Schalterzustand Betrieb" lässt sich konfigurieren, ob
-    AN oder AUS den Betrieb bedeutet (für Pause-Schalter und Freigabe-Schalter).
+    Beispiel ELWA2 rest_command in configuration.yaml:
+      rest_command:
+        elwa2_power:
+          url: "http://<IP>/control.html"
+          method: GET
+          params:
+            power: "{{ power }}"
+    Einschalt-Aktion: rest_command.elwa2_power mit data.power=3450
+    Ausschalt-Aktion: rest_command.elwa2_power mit data.power=0
   domain: automation
   source_url: https://raw.githubusercontent.com/itsh-neumeier/ha-blueprints/main/blueprints/automation/energy/victron_mppt_rs450_200_pv_surplus_mypv_elwa2_de.yaml
   author: Timo Neumeier
@@ -40,27 +44,20 @@ blueprint:
           multiple: true
           filter:
             - domain: sensor
-    pause_switch:
-      name: Pause-/Freigabe-Schalter
-      description: Der Schalter, der den Heizstab pausiert bzw. freigibt.
-      selector:
-        entity:
-          domain: switch
-    running_state:
-      name: Schalterzustand "Betrieb"
+    enable_action:
+      name: Aktion bei Überschuss
       description: >-
-        Welcher Schalterzustand bedeutet "Heizstab läuft" (Pause aufgehoben)?
-        Bei einem klassischen Pause-Schalter ist Betrieb meistens AUS,
-        bei einem Freigabe-Schalter meistens AN.
-      default: "off"
+        Wird ausgeführt wenn Überschuss vorhanden ist (z. B.
+        rest_command.elwa2_power mit data.power=3450).
       selector:
-        select:
-          mode: dropdown
-          options:
-            - label: AUS = Betrieb (AN = Pause)
-              value: "off"
-            - label: AN = Betrieb (AUS = Pause)
-              value: "on"
+        action: {}
+    disable_action:
+      name: Aktion bei kein Überschuss
+      description: >-
+        Wird ausgeführt wenn kein Überschuss mehr vorhanden ist (z. B.
+        rest_command.elwa2_power mit data.power=0).
+      selector:
+        action: {}
     battery_soc_threshold:
       name: Batterie-SOC-Schwellwert
       description: Wird im Modus "Nur LIMITED" ignoriert.
@@ -74,7 +71,7 @@ blueprint:
           mode: box
     trigger_mode:
       name: Auslösemodus
-      description: Welche Bedingungen müssen für die Heizstab-Freigabe erfüllt sein?
+      description: Welche Bedingungen müssen für die Freigabe erfüllt sein?
       default: both
       selector:
         select:
@@ -105,9 +102,7 @@ blueprint:
         duration: {}
     check_interval:
       name: Zyklisches Prüfintervall
-      description: >-
-        Wie oft soll die Automation den aktuellen Zustand selbstständig prüfen
-        und ggf. korrigieren?
+      description: Wie oft soll die Aktion zyklisch wiederholt werden?
       default: "/30"
       selector:
         select:
@@ -131,10 +126,6 @@ trigger_variables:
   mppt_mode_entities: !input mppt_mode_entities
   soc_threshold: !input battery_soc_threshold
   trigger_mode: !input trigger_mode
-
-variables:
-  pause_switch: !input pause_switch
-  running_state: !input running_state
 
 triggers:
   - id: mppt_limited
@@ -169,7 +160,7 @@ conditions: []
 
 actions:
   - choose:
-      # Bedingung erfüllt -> Pause aufheben (Schalter in Betriebszustand)
+      # Überschuss vorhanden -> Einschalt-Aktion ausführen
       - conditions:
           - condition: template
             value_template: >-
@@ -194,17 +185,12 @@ actions:
                   | list
                   | count > 0
               }}
-          - condition: template
-            value_template: "{{ states(pause_switch) != running_state }}"
-        sequence:
-          - service: "switch.turn_{{ running_state }}"
-            target:
-              entity_id: !input pause_switch
+        sequence: !input enable_action
 
-      # Bedingung weggefallen -> Pause aktivieren
+      # Überschuss weg -> Ausschalt-Aktion ausführen
       - conditions:
           - condition: template
-            value_template: "{{ trigger.id in ['surplus_lost', 'periodic_check'] }}"
+            value_template: "{{ trigger.id in ['surplus_lost', 'periodic_check'] or trigger.platform is none }}"
           - condition: template
             value_template: >-
               {{
@@ -218,9 +204,4 @@ actions:
                     | count == 0
                 )
               }}
-          - condition: template
-            value_template: "{{ states(pause_switch) == running_state }}"
-        sequence:
-          - service: "switch.turn_{{ 'off' if running_state == 'on' else 'on' }}"
-            target:
-              entity_id: !input pause_switch
+        sequence: !input disable_action

@@ -1,26 +1,29 @@
-# version: 1.2.0
+# version: 2.0.0
 blueprint:
-  name: Victron MPPT RS450/200 PV Surplus Enable Heating Rod MYPV ELWA2
+  name: Victron MPPT RS450/200 PV Surplus Control MYPV ELWA2
   description: >-
-    Controls a freely selectable switch (e.g. the pause switch of a heating rod)
-    based on the PV surplus of a Victron MPPT RS450/200.
+    Controls a PV surplus load (e.g. myPV ELWA2) based on the PV surplus of a
+    Victron MPPT RS450/200 via freely configurable actions (e.g. HTTP calls via
+    rest_command).
 
-    The trigger mode determines which conditions must be met to enable the load:
+    The trigger mode determines which conditions must be met:
     "LIMITED and SOC" requires both, "LIMITED only" ignores SOC,
     "SOC only" ignores MPPT mode.
 
-    When the condition is met (MPPT in LIMITED mode for the configured duration
-    and/or battery SOC above threshold), the switch is set to the operating state
-    (pause lifted).
+    When conditions are met the enable action is executed.
+    When surplus is gone the disable action is executed.
 
-    If the condition is no longer met for the configured duration, the switch is
-    immediately returned to the pause state.
+    A periodic check also repeats the appropriate action on a configurable interval.
 
-    A periodic check also verifies and corrects the switch state on a configurable
-    interval, regardless of trigger events.
-
-    The "Operating switch state" option lets you configure whether ON or OFF means
-    operating — supporting both pause-type and enable-type switches.
+    Example ELWA2 rest_command in configuration.yaml:
+      rest_command:
+        elwa2_power:
+          url: "http://<IP>/control.html"
+          method: GET
+          params:
+            power: "{{ power }}"
+    Enable action: rest_command.elwa2_power with data.power=3450
+    Disable action: rest_command.elwa2_power with data.power=0
   domain: automation
   source_url: https://raw.githubusercontent.com/itsh-neumeier/ha-blueprints/main/blueprints/automation/energy/victron_mppt_rs450_200_pv_surplus_mypv_elwa2_en.yaml
   author: Timo Neumeier
@@ -40,27 +43,20 @@ blueprint:
           multiple: true
           filter:
             - domain: sensor
-    pause_switch:
-      name: Pause / Enable Switch
-      description: The switch that pauses or enables the heating rod.
-      selector:
-        entity:
-          domain: switch
-    running_state:
-      name: Operating switch state
+    enable_action:
+      name: Action on surplus
       description: >-
-        Which switch state means "heating rod running" (pause lifted)?
-        For a classic pause switch this is usually OFF;
-        for an enable switch it is usually ON.
-      default: "off"
+        Executed when surplus conditions are met (e.g.
+        rest_command.elwa2_power with data.power=3450).
       selector:
-        select:
-          mode: dropdown
-          options:
-            - label: "OFF = Running (ON = Paused)"
-              value: "off"
-            - label: "ON = Running (OFF = Paused)"
-              value: "on"
+        action: {}
+    disable_action:
+      name: Action on no surplus
+      description: >-
+        Executed when surplus conditions are no longer met (e.g.
+        rest_command.elwa2_power with data.power=0).
+      selector:
+        action: {}
     battery_soc_threshold:
       name: Battery SOC threshold
       description: Ignored when trigger mode is "LIMITED only".
@@ -105,9 +101,7 @@ blueprint:
         duration: {}
     check_interval:
       name: Periodic check interval
-      description: >-
-        How often should the automation verify and correct the switch state
-        independent of trigger events?
+      description: How often should the action be repeated?
       default: "/30"
       selector:
         select:
@@ -131,10 +125,6 @@ trigger_variables:
   mppt_mode_entities: !input mppt_mode_entities
   soc_threshold: !input battery_soc_threshold
   trigger_mode: !input trigger_mode
-
-variables:
-  pause_switch: !input pause_switch
-  running_state: !input running_state
 
 triggers:
   - id: mppt_limited
@@ -169,7 +159,7 @@ conditions: []
 
 actions:
   - choose:
-      # Condition met -> lift pause (set switch to operating state)
+      # Surplus available -> execute enable action
       - conditions:
           - condition: template
             value_template: >-
@@ -194,17 +184,12 @@ actions:
                   | list
                   | count > 0
               }}
-          - condition: template
-            value_template: "{{ states(pause_switch) != running_state }}"
-        sequence:
-          - service: "switch.turn_{{ running_state }}"
-            target:
-              entity_id: !input pause_switch
+        sequence: !input enable_action
 
-      # Condition gone -> activate pause
+      # Surplus gone -> execute disable action
       - conditions:
           - condition: template
-            value_template: "{{ trigger.id in ['surplus_lost', 'periodic_check'] }}"
+            value_template: "{{ trigger.id in ['surplus_lost', 'periodic_check'] or trigger.platform is none }}"
           - condition: template
             value_template: >-
               {{
@@ -218,9 +203,4 @@ actions:
                     | count == 0
                 )
               }}
-          - condition: template
-            value_template: "{{ states(pause_switch) == running_state }}"
-        sequence:
-          - service: "switch.turn_{{ 'off' if running_state == 'on' else 'on' }}"
-            target:
-              entity_id: !input pause_switch
+        sequence: !input disable_action

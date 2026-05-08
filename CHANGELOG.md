@@ -12,6 +12,7 @@
 - `climate/victron_mppt_rs450_200_pv_surplus_heatpump`: PV-SG mode control for 1EcoDesign/Froeling heat pump via Victron MPPT RS450/200 (DE + EN)
 
 ### Changed
+- `energy/victron_mppt_rs450_200_pv_surplus_mypv_elwa2` v2.0.0: replace switch on/off with action selectors (enable_action / disable_action) — supports HTTP/rest_command and any other HA action
 - `energy/victron_mppt_rs450_200_pv_surplus_mypv_elwa2` v1.2.0: add `check_interval` input — periodic state correction via time_pattern trigger (default every 30s)
 - `energy/victron_mppt_rs450_200_pv_surplus_mypv_elwa2` v1.1.2: fix manual trigger check — use `trigger.platform is none` (trigger.id is Undefined not None on null trigger)
 - `energy/victron_mppt_rs450_200_pv_surplus_mypv_elwa2` v1.1.1: fix manual/startup trigger (platform=null) not enabling device despite conditions met
