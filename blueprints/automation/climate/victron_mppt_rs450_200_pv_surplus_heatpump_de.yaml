@@ -1,0 +1,173 @@
+# version: 1.0.0
+blueprint:
+  name: Victron MPPT RS450/200 PV-Überschuss Wärmepumpe 1EcoDesign
+  description: >-
+    Steuert den PV-SG-Betriebsmodus einer 1EcoDesign/Froeling Wärmepumpe
+    basierend auf dem PV-Überschuss eines Victron MPPT RS450/200.
+
+    Der PV-Modus wird aktiviert, wenn der Batterie-SOC über dem Schwellwert liegt
+    und mindestens ein ausgewählter MPPT für die konfigurierte Zeit im Modus
+    LIMITED ist.
+
+    Nach dem Wegfall des Überschusses bleibt der PV-Modus für eine konfigurierbare
+    Haltezeit aktiv und wird erst danach deaktiviert.
+  domain: automation
+  source_url: https://raw.githubusercontent.com/itsh-neumeier/ha-blueprints/main/blueprints/automation/climate/victron_mppt_rs450_200_pv_surplus_heatpump_de.yaml
+  author: Timo Neumeier
+  input:
+    battery_soc_entity:
+      name: Batterie-Ladestand-Sensor
+      selector:
+        entity:
+          domain: sensor
+    mppt_mode_entities:
+      name: MPPT-Betriebsmodus-Sensoren
+      description: Ein oder mehrere Victron MPPT-Betriebsmodus-Sensoren auswählen.
+      selector:
+        entity:
+          multiple: true
+          filter:
+            - domain: sensor
+    heatpump_pv_mode_entity:
+      name: Wärmepumpe PV/SG-Modus Auswahl
+      selector:
+        entity:
+          domain: select
+    battery_soc_threshold:
+      name: Batterie-SOC-Schwellwert
+      default: 90
+      selector:
+        number:
+          min: 0
+          max: 100
+          step: 1
+          unit_of_measurement: "%"
+          mode: box
+    limited_for:
+      name: MPPT muss LIMITED bleiben für
+      default:
+        hours: 0
+        minutes: 0
+        seconds: 10
+      selector:
+        duration: {}
+    disable_after:
+      name: PV-Modus deaktivieren nach Überschusswegfall für
+      description: Wie lange muss der PV-Modus aktiv gewesen sein, bevor er nach Überschusswegfall deaktiviert wird.
+      default:
+        hours: 0
+        minutes: 30
+        seconds: 0
+      selector:
+        duration: {}
+    lost_surplus_for:
+      name: Überschuss muss weg sein für
+      default:
+        hours: 0
+        minutes: 5
+        seconds: 0
+      selector:
+        duration: {}
+    enable_option:
+      name: Option zum Aktivieren
+      default: hp_plus_el
+      selector:
+        select:
+          mode: dropdown
+          options:
+            - label: Aus
+              value: "off"
+            - label: Nur WP
+              value: only_hp
+            - label: Nur EL
+              value: only_el
+            - label: WP + EL
+              value: hp_plus_el
+    disable_option:
+      name: Option zum Deaktivieren
+      default: "off"
+      selector:
+        select:
+          mode: dropdown
+          options:
+            - label: Aus
+              value: "off"
+            - label: Nur WP
+              value: only_hp
+            - label: Nur EL
+              value: only_el
+            - label: WP + EL
+              value: hp_plus_el
+
+mode: single
+
+trigger_variables:
+  battery_soc_entity: !input battery_soc_entity
+  mppt_mode_entities: !input mppt_mode_entities
+  soc_threshold: !input battery_soc_threshold
+
+variables:
+  heatpump_pv_mode_entity: !input heatpump_pv_mode_entity
+  enable_option: !input enable_option
+  disable_option: !input disable_option
+
+triggers:
+  - id: mppt_limited
+    trigger: state
+    entity_id: !input mppt_mode_entities
+    to: "LIMITED"
+    for: !input limited_for
+  - id: surplus_lost
+    trigger: template
+    value_template: >-
+      {{
+        states(battery_soc_entity) | float(0) <= soc_threshold | float(0)
+        or expand(mppt_mode_entities)
+          | selectattr('state', 'eq', 'LIMITED')
+          | list
+          | count == 0
+      }}
+    for: !input lost_surplus_for
+
+conditions: []
+
+actions:
+  - choose:
+      # Überschuss vorhanden -> PV-Modus aktivieren
+      - conditions:
+          - condition: template
+            value_template: "{{ trigger.id == 'mppt_limited' }}"
+          - condition: numeric_state
+            entity_id: !input battery_soc_entity
+            above: !input battery_soc_threshold
+          - condition: template
+            value_template: >-
+              {{
+                expand(mppt_mode_entities)
+                | selectattr('state', 'eq', 'LIMITED')
+                | list
+                | count > 0
+              }}
+          - condition: template
+            value_template: "{{ states(heatpump_pv_mode_entity) != enable_option }}"
+        sequence:
+          - service: select.select_option
+            target:
+              entity_id: !input heatpump_pv_mode_entity
+            data:
+              option: "{{ enable_option }}"
+
+      # Überschuss weg -> PV-Modus nach Haltezeit deaktivieren
+      - conditions:
+          - condition: template
+            value_template: "{{ trigger.id == 'surplus_lost' }}"
+          - condition: state
+            entity_id: !input heatpump_pv_mode_entity
+            state: !input enable_option
+            for: !input disable_after
+        sequence:
+          - service: select.select_option
+            target:
+              entity_id: !input heatpump_pv_mode_entity
+            data:
+              option: "{{ disable_option }}"

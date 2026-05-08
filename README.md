@@ -28,7 +28,9 @@ Click the badge next to a blueprint to open the import dialog directly in your H
 
 ### Climate
 
-*Coming soon.*
+| Blueprint | Description | Import DE | Import EN |
+|-----------|-------------|-----------|-----------|
+| [Victron MPPT RS450/200 PV-Überschuss Wärmepumpe 1EcoDesign](blueprints/automation/climate/victron_mppt_rs450_200_pv_surplus_heatpump_de.yaml) | PV-SG-Modus-Steuerung einer 1EcoDesign/Froeling Wärmepumpe via Victron MPPT RS450/200. Mit konfigurierbarer Haltezeit nach Überschusswegfall. | [![Import DE](https://my.home-assistant.io/badges/blueprint_import.svg)](https://my.home-assistant.io/redirect/blueprint_import/?blueprint_url=https%3A%2F%2Fraw.githubusercontent.com%2Fitsh-neumeier%2Fha-blueprints%2Fmain%2Fblueprints%2Fautomation%2Fclimate%2Fvictron_mppt_rs450_200_pv_surplus_heatpump_de.yaml) | [![Import EN](https://my.home-assistant.io/badges/blueprint_import.svg)](https://my.home-assistant.io/redirect/blueprint_import/?blueprint_url=https%3A%2F%2Fraw.githubusercontent.com%2Fitsh-neumeier%2Fha-blueprints%2Fmain%2Fblueprints%2Fautomation%2Fclimate%2Fvictron_mppt_rs450_200_pv_surplus_heatpump_en.yaml) |
 
 ### Lighting
 

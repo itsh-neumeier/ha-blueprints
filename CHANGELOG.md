@@ -8,6 +8,9 @@
 
 ## Unreleased
 
+### Added
+- `climate/victron_mppt_rs450_200_pv_surplus_heatpump`: PV-SG mode control for 1EcoDesign/Froeling heat pump via Victron MPPT RS450/200 (DE + EN)
+
 ### Changed
 - All blueprints now ship as `_de` and `_en` variants; README shows dual import badges
 - Renamed `victron_mppt_rs450_200_pv_surplus_mypv_elwa2.yaml` → `_de.yaml`, added `_en.yaml`
