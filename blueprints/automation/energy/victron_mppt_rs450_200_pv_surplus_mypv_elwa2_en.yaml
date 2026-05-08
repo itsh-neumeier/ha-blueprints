@@ -1,0 +1,146 @@
+# version: 1.0.0
+blueprint:
+  name: Victron MPPT RS450/200 PV Surplus Enable Heating Rod MYPV ELWA2
+  description: >-
+    Controls a freely selectable switch (e.g. the pause switch of a heating rod)
+    based on the PV surplus of a Victron MPPT RS450/200.
+
+    When sufficient surplus is available (battery SOC above threshold AND at least
+    one selected MPPT in LIMITED mode for the configured duration), the switch is
+    set to the operating state (pause lifted).
+
+    If the surplus disappears for the configured duration, the switch is immediately
+    returned to the pause state.
+
+    The "Operating switch state" option lets you configure whether ON or OFF means
+    operating — supporting both pause-type and enable-type switches.
+  domain: automation
+  source_url: https://raw.githubusercontent.com/itsh-neumeier/ha-blueprints/main/blueprints/automation/energy/victron_mppt_rs450_200_pv_surplus_mypv_elwa2_en.yaml
+  author: Timo Neumeier
+  input:
+    battery_soc_entity:
+      name: Battery State of Charge Sensor
+      selector:
+        entity:
+          domain: sensor
+    mppt_mode_entities:
+      name: MPPT Operating Mode Sensors
+      description: Select one or more Victron MPPT operating mode sensors.
+      selector:
+        entity:
+          multiple: true
+          filter:
+            - domain: sensor
+    pause_switch:
+      name: Pause / Enable Switch
+      description: The switch that pauses or enables the heating rod.
+      selector:
+        entity:
+          domain: switch
+    running_state:
+      name: Operating switch state
+      description: >-
+        Which switch state means "heating rod running" (pause lifted)?
+        For a classic pause switch this is usually OFF;
+        for an enable switch it is usually ON.
+      default: "off"
+      selector:
+        select:
+          mode: dropdown
+          options:
+            - label: "OFF = Running (ON = Paused)"
+              value: "off"
+            - label: "ON = Running (OFF = Paused)"
+              value: "on"
+    battery_soc_threshold:
+      name: Battery SOC threshold
+      default: 90
+      selector:
+        number:
+          min: 0
+          max: 100
+          step: 1
+          unit_of_measurement: "%"
+          mode: box
+    limited_for:
+      name: MPPT must stay LIMITED for
+      default:
+        hours: 0
+        minutes: 0
+        seconds: 10
+      selector:
+        duration: {}
+    lost_surplus_for:
+      name: Surplus must be gone for
+      default:
+        hours: 0
+        minutes: 0
+        seconds: 30
+      selector:
+        duration: {}
+
+mode: single
+
+trigger_variables:
+  battery_soc_entity: !input battery_soc_entity
+  mppt_mode_entities: !input mppt_mode_entities
+  soc_threshold: !input battery_soc_threshold
+
+variables:
+  pause_switch: !input pause_switch
+  running_state: !input running_state
+
+triggers:
+  - id: mppt_limited
+    trigger: state
+    entity_id: !input mppt_mode_entities
+    to: "LIMITED"
+    for: !input limited_for
+  - id: surplus_lost
+    trigger: template
+    value_template: >-
+      {{
+        states(battery_soc_entity) | float(0) <= soc_threshold | float(0)
+        or expand(mppt_mode_entities)
+          | selectattr('state', 'eq', 'LIMITED')
+          | list
+          | count == 0
+      }}
+    for: !input lost_surplus_for
+
+conditions: []
+
+actions:
+  - choose:
+      # Surplus available -> lift pause (set switch to operating state)
+      - conditions:
+          - condition: template
+            value_template: "{{ trigger.id == 'mppt_limited' }}"
+          - condition: numeric_state
+            entity_id: !input battery_soc_entity
+            above: !input battery_soc_threshold
+          - condition: template
+            value_template: >-
+              {{
+                expand(mppt_mode_entities)
+                | selectattr('state', 'eq', 'LIMITED')
+                | list
+                | count > 0
+              }}
+          - condition: template
+            value_template: "{{ states(pause_switch) != running_state }}"
+        sequence:
+          - service: "switch.turn_{{ running_state }}"
+            target:
+              entity_id: !input pause_switch
+
+      # Surplus gone -> activate pause (immediately)
+      - conditions:
+          - condition: template
+            value_template: "{{ trigger.id == 'surplus_lost' }}"
+          - condition: template
+            value_template: "{{ states(pause_switch) == running_state }}"
+        sequence:
+          - service: "switch.turn_{{ 'off' if running_state == 'on' else 'on' }}"
+            target:
+              entity_id: !input pause_switch

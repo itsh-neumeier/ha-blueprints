@@ -16,7 +16,7 @@ blueprint:
     AN oder AUS den Betrieb bedeutet (für Pause-Schalter und
     Freigabe-Schalter).
   domain: automation
-  source_url: https://raw.githubusercontent.com/itsh-neumeier/ha-blueprints/main/blueprints/automation/energy/victron_mppt_rs450_200_pv_surplus_mypv_elwa2.yaml
+  source_url: https://raw.githubusercontent.com/itsh-neumeier/ha-blueprints/main/blueprints/automation/energy/victron_mppt_rs450_200_pv_surplus_mypv_elwa2_de.yaml
   author: Timo Neumeier
   input:
     battery_soc_entity:
