@@ -1,4 +1,4 @@
-# version: 1.1.1
+# version: 1.1.2
 blueprint:
   name: Victron MPPT RS450/200 PV Surplus Enable Heating Rod MYPV ELWA2
   description: >-
@@ -150,7 +150,7 @@ actions:
               {{
                 (trigger.id == 'mppt_limited' and trigger_mode in ['both', 'limited_only']) or
                 (trigger.id == 'soc_above' and trigger_mode == 'soc_only') or
-                trigger.id is none
+                trigger.platform is none
               }}
           - condition: template
             value_template: >-
