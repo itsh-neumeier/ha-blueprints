@@ -1,0 +1,25 @@
+name: Bug Report
+description: Report a problem with an existing blueprint
+labels: [bug]
+body:
+  - type: input
+    id: blueprint
+    attributes:
+      label: Blueprint
+      description: File name of the affected blueprint
+      placeholder: e.g. victron_mppt_rs450_200_pv_surplus_mypv_elwa2.yaml
+    validations:
+      required: true
+  - type: textarea
+    id: description
+    attributes:
+      label: What happened?
+      description: Describe the problem and what you expected instead.
+    validations:
+      required: true
+  - type: textarea
+    id: config
+    attributes:
+      label: Your configuration
+      description: Paste the relevant automation config (remove sensitive values).
+      render: yaml

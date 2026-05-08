@@ -1,0 +1,50 @@
+name: Validate Blueprints
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  yamllint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install yamllint
+        run: pip install yamllint
+      - name: Run yamllint
+        run: yamllint blueprints/
+
+  blueprint-schema-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check blueprint required fields
+        run: |
+          python3 - <<'EOF'
+          import sys
+          import pathlib
+
+          REQUIRED = {"name", "description", "domain", "source_url", "author"}
+          errors = []
+
+          for path in sorted(pathlib.Path("blueprints").rglob("*.yaml")):
+              try:
+                  text = path.read_text(encoding="utf-8")
+              except Exception as e:
+                  errors.append(f"{path}: cannot read: {e}")
+                  continue
+
+              # Minimal field presence check without a full YAML parser
+              # (avoids needing pyyaml and HA custom tags)
+              missing = [f for f in REQUIRED if f"  {f}:" not in text and f"\n{f}:" not in text]
+              if missing:
+                  errors.append(f"{path}: missing required fields: {', '.join(missing)}")
+
+          if errors:
+              for e in errors:
+                  print(f"ERROR: {e}", file=sys.stderr)
+              sys.exit(1)
+
+          print(f"OK: checked {len(list(pathlib.Path('blueprints').rglob('*.yaml')))} blueprint(s)")
+          EOF

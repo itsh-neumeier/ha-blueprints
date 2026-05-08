@@ -1,0 +1,31 @@
+name: Blueprint Request
+description: Request a new blueprint
+labels: [enhancement]
+body:
+  - type: input
+    id: title
+    attributes:
+      label: What should the blueprint do?
+      placeholder: e.g. Control heat pump SG-Ready input based on PV surplus
+    validations:
+      required: true
+  - type: dropdown
+    id: category
+    attributes:
+      label: Category
+      options:
+        - energy
+        - climate
+        - lighting
+        - notifications
+        - presence
+        - household
+        - security
+        - other
+    validations:
+      required: true
+  - type: textarea
+    id: details
+    attributes:
+      label: Details
+      description: Trigger conditions, required entities, desired behavior.

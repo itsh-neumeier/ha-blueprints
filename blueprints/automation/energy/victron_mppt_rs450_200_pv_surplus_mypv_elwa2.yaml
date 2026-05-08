@@ -1,0 +1,147 @@
+# version: 1.0.0
+blueprint:
+  name: Victron MPPT RS450/200 PV-Überschuss Freigabe Heizstab MYPV ELWA2
+  description: >-
+    Steuert einen frei wählbaren Schalter (z. B. den Pause-Schalter eines
+    Heizstabs) basierend auf dem PV-Überschuss eines Victron MPPT RS450/200.
+
+    Bei ausreichendem Überschuss (Batterie-SOC über Schwellwert UND mindestens
+    ein ausgewählter MPPT im Modus LIMITED für die konfigurierte Zeit) wird
+    der Schalter in den Betriebszustand gesetzt (Pause aufgehoben).
+
+    Fällt der Überschuss für die konfigurierte Zeit weg, wird der Schalter
+    sofort wieder in den Pause-Zustand gesetzt.
+
+    Über die Option "Schalterzustand Betrieb" lässt sich konfigurieren, ob
+    AN oder AUS den Betrieb bedeutet (für Pause-Schalter und
+    Freigabe-Schalter).
+  domain: automation
+  source_url: https://raw.githubusercontent.com/itsh-neumeier/ha-blueprints/main/blueprints/automation/energy/victron_mppt_rs450_200_pv_surplus_mypv_elwa2.yaml
+  author: Timo Neumeier
+  input:
+    battery_soc_entity:
+      name: Batterie-Ladestand-Sensor
+      selector:
+        entity:
+          domain: sensor
+    mppt_mode_entities:
+      name: MPPT-Betriebsmodus-Sensoren
+      description: Ein oder mehrere Victron MPPT-Betriebsmodus-Sensoren auswählen.
+      selector:
+        entity:
+          multiple: true
+          filter:
+            - domain: sensor
+    pause_switch:
+      name: Pause-/Freigabe-Schalter
+      description: Der Schalter, der den Heizstab pausiert bzw. freigibt.
+      selector:
+        entity:
+          domain: switch
+    running_state:
+      name: Schalterzustand "Betrieb"
+      description: >-
+        Welcher Schalterzustand bedeutet "Heizstab läuft" (Pause aufgehoben)?
+        Bei einem klassischen Pause-Schalter ist Betrieb meistens AUS,
+        bei einem Freigabe-Schalter meistens AN.
+      default: "off"
+      selector:
+        select:
+          mode: dropdown
+          options:
+            - label: AUS = Betrieb (AN = Pause)
+              value: "off"
+            - label: AN = Betrieb (AUS = Pause)
+              value: "on"
+    battery_soc_threshold:
+      name: Batterie-SOC-Schwellwert
+      default: 90
+      selector:
+        number:
+          min: 0
+          max: 100
+          step: 1
+          unit_of_measurement: "%"
+          mode: box
+    limited_for:
+      name: MPPT muss LIMITED bleiben für
+      default:
+        hours: 0
+        minutes: 0
+        seconds: 10
+      selector:
+        duration: {}
+    lost_surplus_for:
+      name: Überschuss muss weg sein für
+      default:
+        hours: 0
+        minutes: 0
+        seconds: 30
+      selector:
+        duration: {}
+
+mode: single
+
+trigger_variables:
+  battery_soc_entity: !input battery_soc_entity
+  mppt_mode_entities: !input mppt_mode_entities
+  soc_threshold: !input battery_soc_threshold
+
+variables:
+  pause_switch: !input pause_switch
+  running_state: !input running_state
+
+triggers:
+  - id: mppt_limited
+    trigger: state
+    entity_id: !input mppt_mode_entities
+    to: "LIMITED"
+    for: !input limited_for
+  - id: surplus_lost
+    trigger: template
+    value_template: >-
+      {{
+        states(battery_soc_entity) | float(0) <= soc_threshold | float(0)
+        or expand(mppt_mode_entities)
+          | selectattr('state', 'eq', 'LIMITED')
+          | list
+          | count == 0
+      }}
+    for: !input lost_surplus_for
+
+conditions: []
+
+actions:
+  - choose:
+      # Überschuss vorhanden -> Pause aufheben (Schalter in Betriebszustand)
+      - conditions:
+          - condition: template
+            value_template: "{{ trigger.id == 'mppt_limited' }}"
+          - condition: numeric_state
+            entity_id: !input battery_soc_entity
+            above: !input battery_soc_threshold
+          - condition: template
+            value_template: >-
+              {{
+                expand(mppt_mode_entities)
+                | selectattr('state', 'eq', 'LIMITED')
+                | list
+                | count > 0
+              }}
+          - condition: template
+            value_template: "{{ states(pause_switch) != running_state }}"
+        sequence:
+          - service: "switch.turn_{{ running_state }}"
+            target:
+              entity_id: !input pause_switch
+
+      # Überschuss weg -> Pause aktivieren (sofort)
+      - conditions:
+          - condition: template
+            value_template: "{{ trigger.id == 'surplus_lost' }}"
+          - condition: template
+            value_template: "{{ states(pause_switch) == running_state }}"
+        sequence:
+          - service: "switch.turn_{{ 'off' if running_state == 'on' else 'on' }}"
+            target:
+              entity_id: !input pause_switch
